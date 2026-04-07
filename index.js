@@ -202,4 +202,4 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.login('MTQ5MDkyMzk4MzczMjc0MDEwNw.G1Oa38.s2THOCYuZphX7GFHTT-NK1eFXu3fkrb3I5-OCI');
+client.login('');
