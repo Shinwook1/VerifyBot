@@ -1,148 +1,136 @@
-const { Client, GatewayIntentBits, REST, Routes, ButtonStyle } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    REST, 
+    Routes,
+    PermissionFlagsBits
+} = require('discord.js');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-const configPath = path.join(__dirname, 'config.json');
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers, // 역할 부여를 위해 필수
+    ]
+});
 
-function loadConfig() {
-    try {
-        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } catch {
-        return { verifyRoleId: null };
-    }
-}
-function saveConfig(config) {
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-}
-let config = loadConfig();
+// 환경 변수에서 토큰 가져오기
+const TOKEN = process.env.TOKEN;
+let authRoleId = null; // 실제 운영 시에는 DB나 JSON 파일에 저장하세요.
 
-// ===== Component V2 빌더 (수정 완료) =====
-const COMPONENT_TYPE = { Container: 17, Section: 9, TextDisplay: 10, Button: 2, ActionRow: 1 };
-const BUTTON_STYLE = { Primary: 1, Secondary: 2, Success: 3, Danger: 4, Link: 5 };
-const IS_COMPONENTS_V2 = 32768;
-
-function textDisplay(content) {
-    return { type: COMPONENT_TYPE.TextDisplay, content: content.slice(0, 4000) };
-}
-
-function section(contents, accessory = null) {
-    // contents는 배열이어야 하고, 1~3개로 제한
-    const items = (Array.isArray(contents) ? contents : [contents]).slice(0, 3);
-    const components = items.map(c => textDisplay(c));
-    const out = { type: COMPONENT_TYPE.Section, components };
+client.once('ready', () => {
+    console.log(`${client.user.tag}으로 로그인되었습니다!`);
     
-    if (accessory) {
-        if (accessory.url) {
-            out.accessory = { type: 11, media: { url: accessory.url } };
-        } else if (accessory.custom_id) {
-            out.accessory = {
-                type: COMPONENT_TYPE.Button,
-                style: accessory.style || BUTTON_STYLE.Secondary,
-                custom_id: accessory.custom_id,
-                label: (accessory.label || '').slice(0, 80)
-            };
-            if (accessory.emoji) out.accessory.emoji = accessory.emoji;
-        }
-    } else {
-        // accessory가 없으면 더미 accessory 추가 (빈 버튼)
-        out.accessory = {
-            type: COMPONENT_TYPE.Button,
-            style: BUTTON_STYLE.Secondary,
-            custom_id: 'dummy_btn',
-            label: ' '
-        };
-    }
-    return out;
-}
-
-function actionRow(buttons) {
-    return {
-        type: COMPONENT_TYPE.ActionRow,
-        components: buttons.map(b => ({
-            type: COMPONENT_TYPE.Button,
-            style: b.style || BUTTON_STYLE.Secondary,
-            custom_id: b.custom_id,
-            label: (b.label || '').slice(0, 80),
-            ...(b.emoji && { emoji: b.emoji })
-        }))
-    };
-}
-
-function container(children, accentColor) {
-    const out = { type: COMPONENT_TYPE.Container, components: children };
-    if (accentColor !== undefined) out.accent_color = accentColor;
-    return out;
-}
-
-function buildPanel() {
-    // 각 섹션의 텍스트를 1~3개로 제한
-    const intro = section(['# ⚡ Volt Service 인증봇', '아래 버튼을 눌러서 인증해주세요.']);
-    const btnRow = actionRow([{ custom_id: 'verify_btn', label: '✅ 인증하기', style: BUTTON_STYLE.Success }]);
-    const info = section(['**📌 안내**', '- 인증 버튼 클릭 시 역할이 지급됩니다.']);
-    const box = container([intro, btnRow, info], 0x00ff00);
-    return { components: [box], flags: IS_COMPONENTS_V2 };
-}
-
-// ===== 봇 이벤트 =====
-client.once('clientReady', async () => {
-    console.log(`✅ 로그인: ${client.user.tag}`);
-    
-    const rest = new REST({ version: '10' }).setToken(client.token);
+    // 슬래시 커맨드 등록
     const commands = [
-        { name: '패널', description: '인증 패널을 표시합니다.' },
-        { name: '역할설정', description: '인증 시 지급할 역할을 설정합니다.', options: [{ name: '역할', type: 8, description: '지급할 역할', required: true }] },
-        { name: '상태', description: '현재 설정된 역할을 확인합니다.' }
+        {
+            name: '역할설정',
+            description: '인증 시 부여할 역할을 설정합니다.',
+            options: [{
+                name: 'role',
+                type: 8, // ROLE 타입
+                description: '지급할 역할 선택',
+                required: true
+            }]
+        },
+        {
+            name: '상태',
+            description: '현재 설정된 역할을 확인합니다.'
+        },
+        {
+            name: '패널',
+            description: '인증 패널을 생성합니다.'
+        }
     ];
-    
-    try {
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ 슬래시 커맨드 등록됨');
-    } catch (e) {
-        console.error('❌ 커맨드 등록 실패:', e);
-    }
+
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    (async () => {
+        try {
+            await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+            console.log('슬래시 커맨드 동기화 완료');
+        } catch (error) {
+            console.error(error);
+        }
+    })();
 });
 
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isCommand()) {
+    // 1. 슬래시 커맨드 처리
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === '역할설정') {
+            const role = interaction.options.getRole('role');
+            authRoleId = role.id;
+            await interaction.reply({ content: `✅ 인증 역할이 ${role.name}으로 설정되었습니다.`, ephemeral: true });
+        }
+
+        if (interaction.commandName === '상태') {
+            const roleName = authRoleId ? interaction.guild.roles.cache.get(authRoleId)?.name : "없음";
+            await interaction.reply({ content: `🔍 현재 설정된 역할: **${roleName || '찾을 수 없음'}**`, ephemeral: true });
+        }
+
         if (interaction.commandName === '패널') {
-            await interaction.reply(buildPanel());
-        }
-        else if (interaction.commandName === '역할설정') {
-            if (!interaction.memberPermissions.has('Administrator')) {
-                return await interaction.reply({ content: '❌ 관리자만 가능합니다.', flags: 64 });
-            }
-            const role = interaction.options.getRole('역할');
-            config.verifyRoleId = role.id;
-            saveConfig(config);
-            await interaction.reply({ content: `✅ 인증 역할이 ${role}로 설정됨`, flags: 64 });
-        }
-        else if (interaction.commandName === '상태') {
-            const role = config.verifyRoleId ? `<@&${config.verifyRoleId}>` : '미설정';
-            await interaction.reply({ content: `📌 현재 인증 역할: ${role}`, flags: 64 });
+            const embed = new EmbedBuilder()
+                .setTitle('Volt Auto Partner Bot')
+                .setDescription('최고의 효율을 자랑하는 디스코드 자동 홍보 시스템에 오신 것을 환영합니다.\n아래 버튼을 통해 라이선스를 인증하고 당신의 홍보를 자동화하세요.')
+                .setColor(0x2b2d31)
+                // .setImage('이미지_URL_입력') // 스크린샷의 중앙 이미지가 있다면 여기에 URL 입력
+                .addFields(
+                    { 
+                        name: '⚠️ 주의', 
+                        value: '본계정 토큰으로 사용하시면 정지 위험이 있으니 **부계로 사용하시는 것을 추천**합니다.\n저희 볼트 서비스는 본계정 사용으로 인한 정지는 책임지지 않습니다.',
+                        inline: false 
+                    },
+                    { 
+                        name: '\u200B', 
+                        value: '🟢 **현재 사용가능** — 서비스가 정상적으로 가동 중입니다.', 
+                        inline: false 
+                    }
+                )
+                .setFooter({ text: 'Volt Service' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('verify_btn')
+                        .setLabel('라이선스 인증하기')
+                        .setStyle(ButtonStyle.Secondary), // 스크린샷과 유사한 회색 버튼
+                    new ButtonBuilder()
+                        .setCustomId('extract_btn')
+                        .setLabel('내 토큰 추출하기')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await interaction.reply({ embeds: [embed], components: [row] });
         }
     }
-    
-    else if (interaction.isButton() && interaction.customId === 'verify_btn') {
-        if (!config.verifyRoleId) {
-            return await interaction.reply({ content: '❌ 인증 역할이 설정되지 않았습니다.', flags: 64 });
+
+    // 2. 버튼 클릭 처리 (컴포넌트 V2)
+    if (interaction.isButton()) {
+        if (interaction.customId === 'verify_btn') {
+            if (!authRoleId) {
+                return await interaction.reply({ content: '❌ 설정된 인증 역할이 없습니다.', ephemeral: true });
+            }
+
+            const role = interaction.guild.roles.cache.get(authRoleId);
+            if (interaction.member.roles.cache.has(authRoleId)) {
+                return await interaction.reply({ content: '✅ 이미 인증된 사용자입니다.', ephemeral: true });
+            }
+
+            try {
+                await interaction.member.roles.add(role);
+                await interaction.reply({ content: `🎊 인증 완료! **${role.name}** 역할이 부여되었습니다.`, ephemeral: true });
+            } catch (err) {
+                await interaction.reply({ content: '❌ 역할을 부여할 권한이 없습니다. 봇의 역할 순위를 확인하세요.', ephemeral: true });
+            }
         }
-        const role = interaction.guild.roles.cache.get(config.verifyRoleId);
-        if (!role) {
-            return await interaction.reply({ content: '❌ 역할을 찾을 수 없습니다.', flags: 64 });
-        }
-        try {
-            await interaction.member.roles.add(role);
-            await interaction.reply({ content: `✅ 인증 완료! ${role} 역할이 지급됨`, flags: 64 });
-        } catch {
-            await interaction.reply({ content: '❌ 역할 지급 실패 (권한 부족)', flags: 64 });
+        
+        if (interaction.customId === 'extract_btn') {
+            await interaction.reply({ content: '토큰 추출 기능을 준비 중입니다.', ephemeral: true });
         }
     }
 });
 
-const token = process.env.TOKEN;
-if (!token) {
-    console.error('❌ TOKEN 환경 변수 없음');
-    process.exit(1);
-}
-client.login(token);
+client.login(TOKEN);
