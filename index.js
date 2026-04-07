@@ -202,4 +202,9 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.login('TOKEN');
+const token = process.env.TOKEN;
+if (!token) {
+    console.error('❌ TOKEN 환경 변수가 없습니다!');
+    process.exit(1);
+}
+client.login(token);
