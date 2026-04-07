@@ -5,7 +5,6 @@ const path = require('path');
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 const configPath = path.join(__dirname, 'config.json');
 
-// ===== 설정 로드/저장 =====
 function loadConfig() {
     try {
         return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -20,7 +19,7 @@ function saveConfig(config) {
 
 let config = loadConfig();
 
-// ===== Component V2 빌더 =====
+// ===== Component V2 빌더 (수정됨) =====
 const COMPONENT_TYPE = {
     Container: 17,
     Section: 9,
@@ -43,29 +42,23 @@ function textDisplay(content) {
     return { type: COMPONENT_TYPE.TextDisplay, content: content.slice(0, 4000) };
 }
 
-function section(contents, accessory = null) {
+function sectionItem(contents, accessory = null) {
     const components = (Array.isArray(contents) ? contents : [contents]).map(c => textDisplay(c));
-    if (!accessory) return components;
-    
-    if (accessory.url) {
-        return {
-            type: COMPONENT_TYPE.Section,
-            components,
-            accessory: { type: 11, media: { url: accessory.url } }
-        };
-    }
-    
-    return {
-        type: COMPONENT_TYPE.Section,
-        components,
-        accessory: {
-            type: COMPONENT_TYPE.Button,
-            style: accessory.style || BUTTON_STYLE.Secondary,
-            custom_id: accessory.custom_id,
-            label: accessory.label?.slice(0, 80) || '',
-            emoji: accessory.emoji
+    const result = { type: COMPONENT_TYPE.Section, components };
+    if (accessory) {
+        if (accessory.url) {
+            result.accessory = { type: 11, media: { url: accessory.url } };
+        } else if (accessory.custom_id) {
+            result.accessory = {
+                type: COMPONENT_TYPE.Button,
+                style: accessory.style || BUTTON_STYLE.Secondary,
+                custom_id: accessory.custom_id,
+                label: accessory.label?.slice(0, 80) || '',
+            };
+            if (accessory.emoji) result.accessory.emoji = accessory.emoji;
         }
-    };
+    }
+    return result;
 }
 
 function button(btn) {
@@ -86,12 +79,13 @@ function actionRow(buttons) {
 
 function container(children, accentColor) {
     const out = { type: COMPONENT_TYPE.Container, components: children };
-    if (accentColor) out.accent_color = accentColor;
+    if (accentColor !== undefined) out.accent_color = accentColor;
     return out;
 }
 
 function buildVerifyPanel() {
-    const intro = section([
+    // 각 섹션을 개별 객체로 생성
+    const introSection = sectionItem([
         '# ⚡ Volt Service 인증봇',
         '',
         '아래 버튼을 눌러서 인증해주세요.',
@@ -103,13 +97,13 @@ function buildVerifyPanel() {
         { custom_id: 'verify_btn', label: '✅ 인증하기', style: BUTTON_STYLE.Success }
     ]);
     
-    const info = section([
+    const infoSection = sectionItem([
         '**📌 안내**',
         '- 인증 버튼 클릭 시 자동으로 역할이 지급됩니다.',
         '- 문의사항은 관리자에게 문의하세요.'
     ]);
     
-    const box = container([intro, btnRow, info], 0x00ff00);
+    const box = container([introSection, btnRow, infoSection], 0x00ff00);
     
     return {
         components: [box],
@@ -121,29 +115,15 @@ function buildVerifyPanel() {
 client.once('ready', async () => {
     console.log(`✅ 로그인: ${client.user.tag}`);
     
-    // 슬래시 커맨드 등록
     const rest = new REST({ version: '10' }).setToken(client.token);
     const commands = [
-        {
-            name: '패널',
-            description: '인증 패널을 표시합니다.'
-        },
+        { name: '패널', description: '인증 패널을 표시합니다.' },
         {
             name: '역할설정',
             description: '인증 시 지급할 역할을 설정합니다.',
-            options: [
-                {
-                    name: '역할',
-                    description: '지급할 역할',
-                    type: 8,
-                    required: true
-                }
-            ]
+            options: [{ name: '역할', description: '지급할 역할', type: 8, required: true }]
         },
-        {
-            name: '상태',
-            description: '현재 설정된 역할을 확인합니다.'
-        }
+        { name: '상태', description: '현재 설정된 역할을 확인합니다.' }
     ];
     
     try {
@@ -166,11 +146,9 @@ client.on('interactionCreate', async (interaction) => {
         if (!interaction.memberPermissions.has('Administrator')) {
             return await interaction.reply({ content: '❌ 관리자만 사용 가능합니다.', ephemeral: true });
         }
-        
         const role = interaction.options.getRole('역할');
         config.verifyRoleId = role.id;
         saveConfig(config);
-        
         await interaction.reply({ content: `✅ 인증 역할이 ${role}로 설정되었습니다.`, ephemeral: true });
     }
     
@@ -187,12 +165,10 @@ client.on('interactionCreate', async (interaction) => {
         if (!config.verifyRoleId) {
             return await interaction.reply({ content: '❌ 관리자가 아직 인증 역할을 설정하지 않았습니다.', ephemeral: true });
         }
-        
         const role = interaction.guild.roles.cache.get(config.verifyRoleId);
         if (!role) {
             return await interaction.reply({ content: '❌ 설정된 역할을 찾을 수 없습니다.', ephemeral: true });
         }
-        
         try {
             await interaction.member.roles.add(role);
             await interaction.reply({ content: `✅ 인증 완료! ${role} 역할이 지급되었습니다.`, ephemeral: true });
