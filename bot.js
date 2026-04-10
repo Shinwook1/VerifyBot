@@ -6,6 +6,7 @@ require('dotenv').config();
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers, // ✅ 추가 (중요)
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
@@ -16,7 +17,6 @@ client.commands = new Collection();
 client.userRoles = new Map();
 client.authCount = 0;
 client.verifiedUsers = new Map();
-
 
 const DATA_DIR = path.join(__dirname, 'data');
 const ROLES_FILE = path.join(DATA_DIR, 'user_roles.json');
@@ -38,10 +38,9 @@ function loadUserRoles() {
   return new Map();
 }
 
-function saveUserRoles(userRolesMap) {
+function saveUserRoles(map) {
   try {
-    const data = JSON.stringify([...userRolesMap.entries()], null, 2);
-    fs.writeFileSync(ROLES_FILE, data, 'utf-8');
+    fs.writeFileSync(ROLES_FILE, JSON.stringify([...map.entries()], null, 2));
   } catch (error) {
     console.error('역할 데이터 저장 실패:', error);
   }
@@ -50,137 +49,136 @@ function saveUserRoles(userRolesMap) {
 function loadAuthCount() {
   try {
     if (fs.existsSync(COUNT_FILE)) {
-      const data = fs.readFileSync(COUNT_FILE, 'utf-8');
-      return parseInt(data, 10);
+      return parseInt(fs.readFileSync(COUNT_FILE, 'utf-8'), 10);
     }
   } catch (error) {
-    console.error('인증 카운트 로드 실패:', error);
+    console.error('카운트 로드 실패:', error);
   }
   return 0;
 }
 
 function saveAuthCount(count) {
   try {
-    fs.writeFileSync(COUNT_FILE, count.toString(), 'utf-8');
+    fs.writeFileSync(COUNT_FILE, count.toString());
   } catch (error) {
-    console.error('인증 카운트 저장 실패:', error);
+    console.error('카운트 저장 실패:', error);
   }
 }
 
-const commands = [
+/* ---------------- 명령어 ---------------- */
 
+const commands = [
   new SlashCommandBuilder()
     .setName('역할설정')
-    .setDescription('인증 시 받을 역할을 설정합니다')
-    .addRoleOption(option =>
-      option
-        .setName('역할')
-        .setDescription('설정할 역할을 선택하세요')
-        .setRequired(true)
+    .setDescription('인증 시 받을 역할 설정')
+    .addRoleOption(opt =>
+      opt.setName('역할').setDescription('역할 선택').setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('상태')
-    .setDescription('현재 설정된 인증 역할을 확인합니다'),
+    .setDescription('현재 설정된 역할 확인'),
 
   new SlashCommandBuilder()
     .setName('패널')
-    .setDescription('인증 패널을 표시합니다 (Components V2)'),
+    .setDescription('인증 패널 생성'),
 
   new SlashCommandBuilder()
     .setName('역할삭제')
-    .setDescription('설정된 인증 역할을 삭제합니다'),
+    .setDescription('역할 설정 삭제'),
 ];
 
 async function deployCommands() {
-  try {
-    console.log('Slash Commands 등록 중...');
-
-    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-    const commandData = commands.map(cmd => cmd.toJSON());
-
-    const data = await rest.put(
-      Routes.applicationGuildCommands(
-        process.env.DISCORD_CLIENT_ID,
-        process.env.DISCORD_GUILD_ID
-      ),
-      { body: commandData }
-    );
-
-  } catch (error) {
-    console.error('명령어 등록 실패:', error);
-  }
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  await rest.put(
+    Routes.applicationGuildCommands(
+      process.env.DISCORD_CLIENT_ID,
+      process.env.DISCORD_GUILD_ID
+    ),
+    { body: commands.map(c => c.toJSON()) }
+  );
 }
 
-client.once('clientReady', async () => {
-  console.log(`✅ 봇 로그인 완료: ${client.user.tag}`);
+/* ---------------- 준비 ---------------- */
+
+client.once('ready', async () => {
+  console.log(`✅ 로그인 완료: ${client.user.tag}`);
   await deployCommands();
 
-  client.userRoles.clear();
-  client.verifiedUsers.clear();
   client.userRoles = loadUserRoles();
   client.authCount = loadAuthCount();
-  
-  client.userRoles.forEach((_roleId, userId) => {
-    client.verifiedUsers.set(userId, true);
+
+  client.userRoles.forEach((_, id) => {
+    client.verifiedUsers.set(id, true);
   });
 });
 
-client.on('interactionCreate', async (interaction) => {
-  
-  if (interaction.isCommand()) {
-    const commandName = interaction.commandName;
+/* ---------------- 인터랙션 ---------------- */
 
-    try {
-      if (commandName === '역할설정') {
-        const selectedRole = interaction.options.getRole('역할');
-        client.userRoles.set(interaction.user.id, selectedRole.id);
+client.on('interactionCreate', async (interaction) => {
+  try {
+
+    /* ❗ 서버 체크 (핵심) */
+    if (!interaction.guild) {
+      return interaction.reply({
+        content: '❌ 서버에서만 사용 가능합니다.',
+        ephemeral: true,
+      });
+    }
+
+    /* ---------------- 슬래시 ---------------- */
+    if (interaction.isChatInputCommand()) {
+
+      if (interaction.commandName === '역할설정') {
+        const role = interaction.options.getRole('역할');
+
+        client.userRoles.set(interaction.user.id, role.id);
         saveUserRoles(client.userRoles);
 
-        await interaction.reply({
-          content: `✅ **${selectedRole.name}** 역할로 설정되었습니다!`,
-          flags: 64,
+        return interaction.reply({
+          content: `✅ ${role.name} 역할로 설정됨`,
+          ephemeral: true,
         });
       }
 
-      else if (commandName === '상태') {
-        const userRoleId = client.userRoles.get(interaction.user.id);
+      if (interaction.commandName === '상태') {
+        const roleId = client.userRoles.get(interaction.user.id);
 
-        if (!userRoleId) {
-          return await interaction.reply({
-            content: '❌ 설정된 역할이 없습니다. `/역할설정` 명령어로 먼저 역할을 설정해주세요.',
-            flags: 64,
+        if (!roleId) {
+          return interaction.reply({
+            content: '❌ 역할 없음',
+            ephemeral: true,
           });
         }
 
-        const role = interaction.guild.roles.cache.get(userRoleId);
+        const role = interaction.guild.roles.cache.get(roleId);
 
-        if (!role) {
-          return await interaction.reply({
-            content: '❌ 설정된 역할을 찾을 수 없습니다.',
-            flags: 64,
-          });
-        }
-
-        await interaction.reply({
-          content: `✅ 현재 설정된 인증 역할: **${role.name}**`,
-          flags: 64,
+        return interaction.reply({
+          content: `✅ 현재 역할: ${role ? role.name : '없음'}`,
+          ephemeral: true,
         });
       }
 
-      else if (commandName === '패널') {
-    
-        client.userRoles = loadUserRoles();
-        client.authCount = loadAuthCount();
+      if (interaction.commandName === '역할삭제') {
+        client.userRoles.delete(interaction.user.id);
+        client.verifiedUsers.delete(interaction.user.id);
+        saveUserRoles(client.userRoles);
 
-        await interaction.reply({
+        return interaction.reply({
+          content: '✅ 삭제 완료',
+          ephemeral: true,
+        });
+      }
+
+      if (interaction.commandName === '패널') {
+        return interaction.reply({
           components: [
             {
               type: 17,
               components: [
                 {
                   type: 10,
-                  content: '### ⚡️ Volt 인증봇\n아래에 버튼을 눌러서 인증해주세요',
+                  content: '## ⚡ 인증 시스템\n버튼을 눌러 인증하세요',
                 },
                 {
                   type: 1,
@@ -188,135 +186,77 @@ client.on('interactionCreate', async (interaction) => {
                     {
                       type: 2,
                       style: 2,
-                      label: '⚡️ 인증',
-                      custom_id: 'auth_verify',
+                      label: '인증',
+                      custom_id: 'auth',
                     },
                   ],
                 },
                 {
-                  type: 14,
-                },
-                {
                   type: 10,
-                  content: `현재 인증 사람 수: **${client.authCount}명**`,
+                  content: `현재 인증: ${client.authCount}명`,
                 },
               ],
             },
           ],
-          flags: 32768,
         });
       }
-
-      else if (commandName === '역할삭제') {
-        const userRoleId = client.userRoles.get(interaction.user.id);
-
-        if (!userRoleId) {
-          return await interaction.reply({
-            content: '❌ 설정된 역할이 없습니다.',
-            flags: 64,
-          });
-        }
-
-        client.userRoles.delete(interaction.user.id);
-        client.verifiedUsers.delete(interaction.user.id);
-        saveUserRoles(client.userRoles);
-
-        await interaction.reply({
-          content: '✅ 설정된 인증 역할이 삭제되었습니다.',
-          flags: 64,
-        });
-      }
-    } catch (error) {
-      console.error(error);
-      await interaction.reply({ content: '명령어 실행 중 에러가 발생했습니다.', flags: 64 });
     }
-  }
 
-  if (interaction.isButton()) {
-    if (interaction.customId === 'auth_verify') {
-      
-      await interaction.deferReply({ flags: 64 });
+    /* ---------------- 버튼 ---------------- */
+    if (interaction.isButton()) {
 
-      const userRole = client.userRoles.get(interaction.user.id);
+      if (interaction.customId === 'auth') {
 
-      if (!userRole) {
-        return await interaction.editReply({
-          content: '❌ 먼저 `/역할설정` 명령어로 역할을 설정해주세요.',
-        });
-      }
+        if (!interaction.member) {
+          return interaction.reply({
+            content: '❌ 멤버 정보 없음',
+            ephemeral: true,
+          });
+        }
 
-      try {
-        const role = interaction.guild.roles.cache.get(userRole);
+        await interaction.deferReply({ ephemeral: true });
+
+        const roleId = client.userRoles.get(interaction.user.id);
+
+        if (!roleId) {
+          return interaction.editReply('❌ 역할 먼저 설정');
+        }
+
+        const role = interaction.guild.roles.cache.get(roleId);
+
         if (!role) {
-          return await interaction.editReply({
-            content: '❌ 설정된 역할을 찾을 수 없습니다.',
-          });
+          return interaction.editReply('❌ 역할 없음');
         }
 
-        if (interaction.member.roles.cache.has(userRole)) {
-          return await interaction.editReply({
-            content: `✅ 이미 \`${role.name}\` 역할을 가지고 있습니다!`,
-          });
+        if (interaction.member.roles.cache.has(role.id)) {
+          return interaction.editReply('이미 있음');
         }
 
-        if (client.verifiedUsers.has(interaction.user.id)) {
-          client.verifiedUsers.delete(interaction.user.id);
+        try {
+          await interaction.member.roles.add(role);
+        } catch (err) {
+          console.error(err);
+          return interaction.editReply('❌ 권한 문제 (봇 역할 위치 확인)');
         }
-
-        await interaction.member.roles.add(role);
 
         if (!client.verifiedUsers.has(interaction.user.id)) {
           client.verifiedUsers.set(interaction.user.id, true);
           client.authCount++;
           saveAuthCount(client.authCount);
-          
-          try {
-            await interaction.message.edit({
-              components: [
-                {
-                  type: 17,
-                  components: [
-                    {
-                      type: 10,
-                      content: '# ⚡️ Volt 인증봇\n아래에 버튼을 눌러서 인증해주세요',
-                    },
-                    {
-                      type: 1,
-                      components: [
-                        {
-                          type: 2,
-                          style: 2,
-                          label: '⚡️ 인증',
-                          custom_id: 'auth_verify',
-                        },
-                      ],
-                    },
-                    {
-                      type: 14,
-                    },
-                    {
-                      type: 10,
-                      content: `현재 인증 사람 수: **${client.authCount}명**`,
-                    },
-                  ],
-                },
-              ],
-              flags: 32768,
-            });
-          } catch (error) {
-            console.error('패널 메시지 업데이트 실패:', error);
-          }
         }
-        
-        await interaction.editReply({
-          content: `✅ 인증 완료! \`${role.name}\` 역할이 부여되었습니다.`,
-        });
-      } catch (error) {
-        console.error(error);
-        await interaction.editReply({
-          content: '❌ 역할 부여 중 에러가 발생했습니다.',
-        });
+
+        return interaction.editReply(`✅ ${role.name} 지급 완료`);
       }
+    }
+
+  } catch (err) {
+    console.error(err);
+
+    if (!interaction.replied) {
+      interaction.reply({
+        content: '❌ 오류 발생',
+        ephemeral: true,
+      });
     }
   }
 });
